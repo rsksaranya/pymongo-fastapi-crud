@@ -1,0 +1,30 @@
+[
+    {
+        "operation": "create",
+        "data": {
+            "_id": "3",
+            "name": "john",
+            "email": "john@example.com"
+        }
+    },
+    {
+        "operation": "update",
+        "data": {
+            "_id": "1",
+            "name": "Alice Updated",
+            "email": "alice_updated@example.com"
+        }
+    },
+    {
+        "operation": "read",
+        "data": {
+            "_id": "1"
+        }
+    },
+    {
+        "operation": "delete",
+        "data": {
+            "_id": "1"
+        }
+    }
+]
