@@ -1,6 +1,33 @@
 import uuid
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel,EmailStr, Field
+
+
+class CompanyBase(BaseModel):
+    name: str
+    code: str
+    address: str
+    pincode: str
+    email: EmailStr
+    mobile_no: str
+    phone: Optional[str] = None
+    gst_number: str
+
+class CompanyCreate(CompanyBase):
+    pass
+
+class CompanyUpdate(BaseModel):
+    name: Optional[str]
+    code: Optional[str]
+    address: Optional[str]
+    pincode: Optional[str]
+    email: Optional[EmailStr]
+    mobile_no: Optional[str]
+    phone: Optional[str]
+    gst_number: Optional[str]
+
+
+
 
 class Book(BaseModel):
     id: str = Field(default_factory=uuid.uuid4, alias="_id")
