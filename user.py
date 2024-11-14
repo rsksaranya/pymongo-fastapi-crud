@@ -3,6 +3,8 @@ from pymongo import MongoClient, errors
 from bson import ObjectId
 from bson.errors import InvalidId
 from pydantic import ValidationError
+from datetime import datetime
+import bcrypt
 from models import UserCreate, UserUpdate
 
 # Import company collection for validation
@@ -30,7 +32,12 @@ def user_helper(user) -> dict:
         "gender": user["gender"],
         "dob": user["dob"],
         "role_id": user.get("role_id"),
-        "company_id": user["company_id"]
+        "company_id": user["company_id"],
+        "status": user["status"],
+        "created_by": user.get("created_by"),
+        "updated_by": user.get("updated_by"),
+        "created_at": user.get("created_at"),
+        "updated_at": user.get("updated_at")
     }
 
 # Function to validate if a company exists
@@ -44,13 +51,20 @@ def is_valid_company(company_id: str) -> bool:
 def is_email_unique(email: str, user_id: str = None) -> bool:
     query = {"email": email}
     if user_id:
-        # Exclude the current user if checking for an update
         query["_id"] = {"$ne": ObjectId(user_id)}
     return user_collection.find_one(query) is None
 
-### CRUD Endpoints with Email Validation ###
+# Function to hash a password
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
-# Create a new user with email and company ID validation
+# Function to verify a password
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
+
+### CRUD Endpoints with Secure Password Handling ###
+
+# Create a new user with validation and password hashing
 @router.post("/users", response_model=dict)
 async def create_user(user: UserCreate):
     try:
@@ -62,7 +76,15 @@ async def create_user(user: UserCreate):
         if not is_email_unique(user.email):
             raise HTTPException(status_code=400, detail="Email is already in use")
 
+        # Hash the password before saving
+        hashed_password = hash_password(user.password)
+
         new_user = user.dict()
+        new_user["password"] = hashed_password
+        new_user["status"] = 1
+        new_user["created_at"] = datetime.utcnow()
+        new_user["updated_at"] = None
+
         result = user_collection.insert_one(new_user)
         created_user = user_collection.find_one({"_id": result.inserted_id})
         return user_helper(created_user)
@@ -71,11 +93,12 @@ async def create_user(user: UserCreate):
     except errors.PyMongoError as e:
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
-# Update a user by ID with email and company ID validation
+# Update a user by ID with validation, including password update if provided
 @router.put("/users/{user_id}", response_model=dict)
 async def update_user(user_id: str, user: UserUpdate):
     try:
         updated_data = {k: v for k, v in user.dict().items() if v is not None}
+        updated_data["updated_at"] = datetime.utcnow()
 
         # Validate company_id if it is being updated
         if "company_id" in updated_data and not is_valid_company(updated_data["company_id"]):
@@ -85,8 +108,9 @@ async def update_user(user_id: str, user: UserUpdate):
         if "email" in updated_data and not is_email_unique(updated_data["email"], user_id):
             raise HTTPException(status_code=400, detail="Email is already in use")
 
-        if not updated_data:
-            raise HTTPException(status_code=400, detail="No fields to update")
+        # If password is being updated, hash the new password
+        if "password" in updated_data:
+            updated_data["password"] = hash_password(updated_data["password"])
 
         result = user_collection.update_one({"_id": ObjectId(user_id)}, {"$set": updated_data})
         
@@ -97,5 +121,33 @@ async def update_user(user_id: str, user: UserUpdate):
         return user_helper(updated_user)
     except InvalidId:
         raise HTTPException(status_code=400, detail="Invalid ID format")
+    except errors.PyMongoError as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+# Soft delete a user
+@router.delete("/users/{user_id}", response_model=dict)
+async def delete_user(user_id: str, updated_by: str):
+    try:
+        result = user_collection.update_one(
+            {"_id": ObjectId(user_id)},
+            {"$set": {"status": 0, "updated_by": updated_by, "updated_at": datetime.utcnow()}}
+        )
+        
+        if result.matched_count == 0:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        deleted_user = user_collection.find_one({"_id": ObjectId(user_id)})
+        return user_helper(deleted_user)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid ID format")
+    except errors.PyMongoError as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+# Retrieve all active users
+@router.get("/users", response_model=list)
+async def get_users():
+    try:
+        users = user_collection.find({"status": 1})
+        return [user_helper(user) for user in users]
     except errors.PyMongoError as e:
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
